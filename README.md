@@ -188,3 +188,7 @@ plot_data %>% ggplot(aes(x = year, y = 100*value, color = indicator)) +
 ```
 
 ![](README_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
+
+Note that the *Pregnancy rate (combined)* differs from the report’s
+*combined indicator* in the sense that equal weight is given to all
+seals in a year rather than to yearly country indices.
