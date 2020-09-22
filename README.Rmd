@@ -4,7 +4,7 @@ output: github_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 options(dplyr.summarise.inform = FALSE)
 ```
 
@@ -14,66 +14,67 @@ This is an attempt to reproduce *Results figure 2* in the [Nutritional status of
 
 ```{r}
 library(tidyverse)
-data <- readxl::read_excel("Blubber thickness seals 2020.xlsx", sheet = "Data") %>% 
+data_blubber <- readxl::read_excel("Blubber thickness seals 2020.xlsx", sheet = "Data", na = ".") %>% 
   janitor::clean_names() %>% 
   mutate(cause_of_death = tolower(cause_of_death),
          age_years = as.numeric(age_years)) %>% 
   filter(!is.na(blubber_mm)) %>% 
   select(year, month, age_years, blubber_mm, cause_of_death)
-glimpse(data)
+glimpse(data_blubber)
 ```
 
 we extract seals caught in August-October, of 1-3 years and remove the ones found stranded.
 
 ```{r}
-sub_data <- filter(data,
-                   month %in% 8:12,
-                   age_years >= 1, age_years <=3,
-                   cause_of_death != "stranded")
+sub_data_blubber <- filter(data_blubber,
+                           month %in% 8:12,
+                           age_years >= 1, age_years <=3,
+                           cause_of_death != "stranded")
 ```
 
 According to the caption, the figure in the report shows three-year moving averages. This could be interpreted as the average blubber thickness in a three-year interval or the average *yearly average* across three years. Since the number of seals differ between years, these alternatives will give somewhat different results. We choose the second interpretation. The function `get_mov_means`
 computes the moving averages and standard errors for each cause of death a given year.
 
 ```{r}
-get_mov_mean <- function(data, y){
-  filter(data, year %in% (y - 1):(y + 1)) %>% 
-    group_by(cause_of_death, year) %>% 
-    summarise(mean_blub = mean(blubber_mm),
-              n_blub = n(),
-              var_blub_mean = var(blubber_mm)/n_blub
-    ) %>% 
-    group_by(cause_of_death) %>% 
-    summarise(mov_mean = mean(mean_blub),
-              n = n(),
-              se = sqrt(sum(var_blub_mean)) / n) %>% 
-    mutate(year = y) %>% 
-    ungroup() %>% 
-    na.omit()
+get_mov_means <- function(data, years, variable, group = NULL){
+  map_df(years, function(y){
+    filter(data, year %in% (y - 2):(y), !is.na({{ variable }})) %>% 
+      group_by({{ group }}, year) %>% 
+      summarise(y_mean = mean({{ variable }}),
+                y_n = n(),
+                y_var = var({{ variable }})/y_n
+      ) %>% 
+      group_by({{ group }}) %>% 
+      summarise(mov_mean = mean(y_mean),
+                y_mean = y_mean[n()],
+                n = y_n[n()],
+                se = sqrt(sum(y_var)) / n()) %>% 
+      mutate(year = y) %>% 
+      ungroup()
+  }
+  )
 }
 ```
 
 We are now ready to summarise data by
 
 ```{r}
-years <- 2002:2018
-summary_data <- map_df(years, ~get_mov_mean(sub_data, .x)) %>% 
+summary_blubber <- get_mov_means(sub_data_blubber, 2002:2018, blubber_mm, cause_of_death) %>% 
   left_join(tibble(cause_of_death = c("by-caught", "hunted"), threshold = c(35, 40)),
             by = "cause_of_death")
-glimpse(summary_data)
+glimpse(summary_blubber)
 ```
 
 where also the different thresholds are added. Now we are ready to plot
 
 ```{r}
-summary_data %>% 
-  ggplot(aes(x = year, y = mov_mean, color = cause_of_death, shape = cause_of_death)) +
-  geom_hline(aes(yintercept = threshold, color = cause_of_death), 
-             linetype = 2, show.legend = FALSE, size = .7) +
-  geom_line(alpha = .5) +
+fig_blubber <- summary_blubber %>% 
+  ggplot(aes(x = year, color = cause_of_death, shape = cause_of_death)) +
+  geom_hline(aes(yintercept = threshold, color = cause_of_death), alpha = .5) +
   geom_linerange(aes(ymin = mov_mean - se, ymax = mov_mean + se), alpha = .5)+
-  geom_point(size = 2) +
-  scale_x_continuous(breaks = 2002:2019) + theme_bw() +
+  geom_point(aes(y = mov_mean), size = 2) +
+  geom_point(aes(y = y_mean, size = n), pch = 21, show.legend = FALSE) +
+  scale_x_continuous(breaks = 2002:2018) + theme_bw() +
   ylab("Blubber thickness (mm)") + xlab("Year") + 
   theme(panel.grid.minor = element_blank(), 
         panel.grid.major = element_blank(), 
@@ -81,7 +82,12 @@ summary_data %>%
         legend.position = c(.9, .9), legend.background = element_rect(color = "black")) +
   scale_color_discrete(labels = c("By-caught", "Hunted")) +
   scale_shape_discrete(labels = c("By-caught", "Hunted"))
+ggsave(fig_blubber, filename = "blubber.png", height = 6, width = 7)
+knitr::include_graphics("blubber.png")
 ```
+
+where the symbols show three-year running means with standard errors and the circles yearly means with area proportional to the number of observations they are based on.
+
 
 # Reproductive status of seals
 
@@ -89,58 +95,91 @@ This is an attempt to (partially) reproduce *Results figure 2* in the [Reproduct
 
 
 ```{r}
-data <- readxl::read_excel("Reproductive data update 2020 Finland and Sweden.xlsx", 
+data_rep <- readxl::read_excel("Reproductive data update 2020 Finland and Sweden.xlsx", 
                            sheet = "Data", na = ".") %>% 
   janitor::clean_names() %>% 
   select(country, year, reproductive_year, month, pregnancy_rate, gestation, ppp)
-glimpse(data)
+glimpse(data_rep)
 ```
 
-We filter out Swedish seals caught in July since the can't be classified correctly and years ouside of the interval 2011-2018
+We filter out Swedish seals caught in July since the can't be classified correctly and years ouside of the interval 2011-2019
 
 ```{r}
-sub_data <- filter(data, !((country == "Sverige") & (month == 7)),
-                   year %in% 2011:2018)
+sub_data_rep <- filter(data_rep, !((country == "Sverige") & (month == 7)),
+                   year %in% 2011:2019)
 ```
 
 compute yearly summaries of the indicators
 
 ```{r}
-summary_data <- sub_data %>% 
-  group_by(year) %>%
-  summarise(`Gestation rate` = mean(gestation, na.rm = TRUE),
-            n_gestation = sum(!is.na(gestation)),
-            `Pregnancy signs rate` = mean(ppp, na.rm = TRUE),
-            n_ppp = sum(!is.na(ppp)),
-            `Pregnancy rate (combined)` = mean(pregnancy_rate, na.rm = TRUE),
-            n_pregnancy_rate = sum(!is.na(pregnancy_rate))
-  )
-glimpse(summary_data)
-```
-
-Before plotting we convert to long format
-
-```{r}
-plot_data <- summary_data %>% 
-  select(-starts_with("n_")) %>% 
-  pivot_longer(-year, names_to = "indicator", values_to = "value")
+summary_rep <- bind_rows(
+  mutate(get_mov_means(sub_data_rep, 2011:2019, ppp), label = "Post partum pregnancy signs rate"),
+  mutate(get_mov_means(sub_data_rep, 2011:2019, gestation), label = "Gestation rate"),
+  mutate(get_mov_means(sub_data_rep, 2011:2019, pregnancy_rate), label = "Pregnancy rate (combined)"),
+)
+glimpse(summary_rep)
 ```
 
 and plot
 
 ```{r}
-plot_data %>% ggplot(aes(x = year, y = 100*value, color = indicator)) + 
-  geom_hline(yintercept = 90, linetype = 2) +
-  geom_point(size = 2, alpha = .8) + 
-  geom_line(data = filter(plot_data, indicator == "Pregnancy rate (combined)"), 
-            alpha = .5, show.legend = FALSE) +
-  ylim(c(0, 100)) + theme_bw() +
-  theme(panel.grid.minor = element_blank(), 
-        panel.grid.major = element_blank(), 
-        legend.title = element_blank(),
-        legend.position = c(.25, .15), 
-        legend.background = element_rect(color = "black")) +
-  xlab("Year") + ylab("%")
+fig_rep1 <- summary_rep %>% ggplot(aes(x = year)) + 
+  geom_point(aes(y = mov_mean)) + 
+  geom_line(aes(y = mov_mean)) + 
+  geom_linerange(aes(ymax = mov_mean + se, ymin = mov_mean - se)) + 
+  geom_hline(yintercept = .9, linetype = 2) +
+  geom_point(aes(y = y_mean, size = n), pch = 21, show.legend = FALSE) +
+  facet_wrap(~label, ncol = 3) + ylim(c(0, 1)) + 
+  theme_bw() +  scale_x_continuous(breaks = 2011:2019) +
+  theme(panel.grid.minor.x = element_blank(), panel.grid.major.x = element_blank()) + 
+  xlab("") + ylab("Proportion")
+ggsave(fig_rep1, filename = "fig_rep1.png", width = 9, height = 6, type = "cairo")
+knitr::include_graphics("fig_rep1.png")
 ```
 
-Note that the *Pregnancy rate (combined)* differs from the report's *combined indicator* in the sense that equal weight is given to all seals in a year rather than to yearly country indices.
+Note that the numeber of observations vary widely between years. Since the running mean gives equal weight to yearly means, years with very few observations may largely influence the moving mean. A better idea is probably to give equal weights to observations in the three-year window, this requires an updated function
+
+```{r}
+get_mov_means2 <- function(data, years, variable, group = NULL){
+  map_df(years, function(y){
+    filter(data, year %in% (y - 2):(y), !is.na({{ variable }})) %>% 
+      group_by({{ group }}) %>% 
+      summarise(mov_mean = mean({{ variable }}),
+                y_mean = mean({{ variable }}[year == y]),
+                n = length({{ variable }}[year == y]),
+                se = sd({{ variable }})/sqrt(n())) %>% 
+      mutate(year = y) %>% 
+      ungroup()
+  }
+  )
+}
+```
+
+which is applied as before
+
+```{r}
+summary_rep <- bind_rows(
+  mutate(get_mov_means2(sub_data_rep, 2011:2019, ppp), label = "Post partum pregnancy signs rate"),
+  mutate(get_mov_means2(sub_data_rep, 2011:2019, gestation), label = "Gestation rate"),
+  mutate(get_mov_means2(sub_data_rep, 2011:2019, pregnancy_rate), label = "Pregnancy rate (combined)"),
+)
+glimpse(summary_rep)
+```
+
+and plot
+
+```{r}
+fig_rep2 <- summary_rep %>% ggplot(aes(x = year)) + 
+  geom_point(aes(y = mov_mean)) + 
+  geom_line(aes(y = mov_mean)) + 
+  geom_linerange(aes(ymax = mov_mean + se, ymin = mov_mean - se)) + 
+  geom_hline(yintercept = .9, linetype = 2) +
+  geom_point(aes(y = y_mean, size = n), pch = 21, show.legend = FALSE) +
+  facet_wrap(~label, ncol = 3) + ylim(c(0, 1)) + 
+  theme_bw() +  scale_x_continuous(breaks = 2011:2019) +
+  theme(panel.grid.minor.x = element_blank(), panel.grid.major.x = element_blank()) + 
+  xlab("") + ylab("Proportion")
+ggsave(fig_rep2, filename = "fig_rep2.png", width = 9, height = 6, type = "cairo")
+knitr::include_graphics("fig_rep2.png")
+```
+
