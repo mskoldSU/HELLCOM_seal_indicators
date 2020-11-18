@@ -52,13 +52,15 @@ get_mov_means <- function(data, years, variable, group = NULL){
       group_by({{ group }}, year) %>% 
       summarise(y_mean = mean({{ variable }}),
                 y_n = n(),
-                y_var = var({{ variable }})/y_n
+                y_var = var({{ variable }})/y_n,
+                .groups = "drop"
       ) %>% 
       group_by({{ group }}) %>% 
       summarise(mov_mean = mean(y_mean),
                 y_mean = y_mean[n()],
                 n = y_n[n()],
-                se = sqrt(sum(y_var)) / n()) %>% 
+                se = sqrt(sum(y_var)) / n(),
+                .groups = "drop") %>% 
       mutate(year = y) %>% 
       ungroup()
   }
